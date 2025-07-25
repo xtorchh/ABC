@@ -22,15 +22,13 @@ async def scrape_currys(page):
                 saving_text = await saving_el.text_content()
                 saving = float(saving_text.strip().replace("£", ""))
             
-            url = await product.query_selector_eval("a.product-tile-link", "el => el.href")
             price = float(price_text.replace("£", "").replace(",", ""))
 
             if saving >= MIN_SAVE_POUNDS:
                 deals.append({
                     "name": name,
                     "price": price,
-                    "saving": saving,
-                    "url": url
+                    "saving": saving
                 })
         except Exception as e:
             logging.warning(f"Error parsing product: {e}")
@@ -43,7 +41,6 @@ async def send_to_discord(deals):
             "embeds": [{
                 "title": deal["name"],
                 "description": f"💷 Price: **£{deal['price']:.2f}**\n💸 You save: **£{deal['saving']:.2f}**",
-                "url": deal["url"],
                 "color": 5814783
             }]
         }
