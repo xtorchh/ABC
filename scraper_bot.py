@@ -1,110 +1,94 @@
 import asyncio
 import logging
 from datetime import datetime
-from pathlib import Path
-
 from playwright.async_api import async_playwright
 import aiohttp
-import os
 
-# === CONFIGURATION ===
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ"  # 🔁 Replace with your webhook
+WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ"
 
-# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+async def send_to_discord(message: str, screenshot_path: str = None):
+    async with aiohttp.ClientSession() as session:
+        data = {"content": message}
+        files = {}
+        if screenshot_path:
+            with open(screenshot_path, "rb") as f:
+                file_bytes = f.read()
+            files = {"file": file_bytes}
+            # Note: discord.py or aiohttp webhook file upload requires multipart/form-data
+            # Here, simpler approach: upload via multipart
+            # We'll use aiohttp's FormData
 
-async def send_screenshot_to_discord(file_path, webhook_url):
-    try:
-        with open(file_path, "rb") as f:
-            data = aiohttp.FormData()
-            data.add_field("file", f, filename="screenshot.png", content_type="image/png")
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(webhook_url, data=data) as resp:
+            form = aiohttp.FormData()
+            form.add_field("payload_json", '{"content": "%s"}' % message)
+            form.add_field("file", file_bytes, filename="screenshot.png", content_type="image/png")
+            try:
+                async with session.post(WEBHOOK_URL, data=form) as resp:
                     if resp.status != 204:
-                        logger.error(f"[ERROR] Discord upload failed: {resp.status}")
-                    else:
-                        logger.info("[INFO] Screenshot sent to Discord")
-    except Exception as e:
-        logger.exception(f"[ERROR] Failed to send to Discord: {e}")
+                        logger.error(f"Discord webhook failed with status {resp.status}")
+            except Exception as e:
+                logger.error(f"Failed to send to Discord: {e}")
+            return
 
-
-async def send_text_to_discord(content):
-    try:
-        async with aiohttp.ClientSession() as session:
-            payload = {"content": content}
-            async with session.post(DISCORD_WEBHOOK_URL, json=payload) as resp:
+        try:
+            async with session.post(WEBHOOK_URL, json=data) as resp:
                 if resp.status != 204:
-                    logger.error(f"[ERROR] Discord webhook failed: {resp.status}")
-                else:
-                    logger.info("[INFO] Sent message to Discord")
-    except Exception as e:
-        logger.exception(f"[ERROR] Failed to send to Discord: {e}")
-
+                    logger.error(f"Discord webhook failed with status {resp.status}")
+        except Exception as e:
+            logger.error(f"Failed to send to Discord: {e}")
 
 async def scrape_currys(page):
-    logger.info("Navigating to Currys Epic Deals page...")
-    await page.goto("https://www.currys.co.uk/epic-deals", timeout=60000)
-    await page.wait_for_load_state("networkidle")
-    await asyncio.sleep(5)  # Ensure dynamic content loads
+    url = "https://www.currys.co.uk/epic-deals"
+    await page.goto(url)
 
-    # Screenshot for debugging after load
-    await page.screenshot(path="debug_after_load.png", full_page=True)
-
-    selector = ".product-item-element"
+    # Wait for deals container; adjust selector if needed
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
-        logger.debug(f"Waiting for {selector} elements, attempt {attempt}")
         try:
-            await page.wait_for_selector(selector, timeout=5000)
+            logger.info(f"Waiting for .product-item-element, attempt {attempt}")
+            await page.wait_for_selector(".product-item-element", timeout=15000)
             break
         except Exception:
-            logger.warning(f"[DEBUG] Timeout on attempt {attempt}: {selector} not found")
-    else:
-        filename = f"screenshot_fail_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-        await page.screenshot(path=filename, full_page=True)
-        logger.error(f"No {selector} elements found after {max_attempts} attempts. Screenshot saved to {filename}")
-        await send_screenshot_to_discord(filename, DISCORD_WEBHOOK_URL)
-        return []
+            logger.warning(f"[DEBUG] Timeout on attempt {attempt}: .product-item-element not found")
+            if attempt == max_attempts:
+                screenshot_name = f"screenshot_fail_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                await page.screenshot(path=screenshot_name)
+                await send_to_discord(f"[ERROR] No product-item-element found after {max_attempts} attempts. See screenshot.", screenshot_name)
+                return []
 
-    # Scrape items
-    product_cards = await page.query_selector_all(selector)
-    logger.info(f"Found {len(product_cards)} product elements")
-
+    products = await page.query_selector_all(".product-item-element")
     deals = []
-
-    for card in product_cards:
+    for product in products:
         try:
-            title = await card.query_selector_eval("h3, .product-title", "el => el.innerText")  # Fallback tag
-            price_now = await card.inner_text()
-            if "Save £" in price_now or "save £" in price_now:
-                deals.append(f"**{title.strip()}**\n{price_now.strip()}")
-        except Exception as e:
-            logger.warning(f"Failed parsing a product: {e}")
-
+            title = await product.query_selector_eval(".product-title", "el => el.textContent.trim()")
+            price_text = await product.query_selector_eval(".price", "el => el.textContent.trim()")
+            save_text = await product.query_selector_eval(".save", "el => el.textContent.trim()", strict=False)  # might be missing
+            # Example: Check if save_text has 70% or more
+            if save_text and "70%" in save_text:
+                deals.append(f"{title} - {price_text} - {save_text}")
+        except Exception:
+            continue
     return deals
-
 
 async def main():
     logger.info("Starting scraper...")
-
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        context = await browser.new_context()
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        )
         page = await context.new_page()
 
         deals = await scrape_currys(page)
-        await browser.close()
-
         if deals:
-            for deal in deals:
-                await send_text_to_discord(deal)
+            message = "**Currys 70%+ Deals Found:**\n" + "\n".join(deals)
         else:
-            await send_text_to_discord("No qualifying deals found.")
-            logger.info("No qualifying deals found.")
+            message = "No qualifying deals found."
 
+        await send_to_discord(message)
+        await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
