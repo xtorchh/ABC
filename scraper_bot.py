@@ -1,3 +1,6 @@
+import subprocess
+subprocess.run(["playwright", "install", "chromium"])
+
 import asyncio
 import json
 import re
