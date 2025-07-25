@@ -5,11 +5,17 @@ import re
 
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ"
 
-async def send_discord_message(message: str):
+async def send_discord_message(message: str, file_path: str = None):
     async with aiohttp.ClientSession() as session:
-        payload = {"content": message}
+        data = aiohttp.FormData()
+        data.add_field("content", message)
+
+        if file_path:
+            with open(file_path, "rb") as f:
+                data.add_field("file", f, filename="debug_screenshot.png", content_type="image/png")
+
         try:
-            async with session.post(DISCORD_WEBHOOK_URL, json=payload) as resp:
+            async with session.post(DISCORD_WEBHOOK_URL, data=data) as resp:
                 if resp.status not in [200, 204]:
                     print(f"Failed to send message: {resp.status}")
         except Exception as e:
@@ -17,15 +23,21 @@ async def send_discord_message(message: str):
 
 async def scrape_currys(page):
     await page.goto("https://www.currys.co.uk/epic-deals", timeout=60000, wait_until="networkidle")
-    await page.wait_for_timeout(2000)  # Extra buffer to load content
+    await page.wait_for_timeout(2000)  # extra wait for animation/load
 
     try:
         await page.wait_for_selector('li[data-component="ProductCard"]', timeout=10000)
     except Exception:
-        await send_discord_message("[DEBUG] Timeout: ProductCard elements still not found.")
+        await page.screenshot(path="debug_screenshot.png", full_page=True)
+        await send_discord_message("[DEBUG] Timeout: ProductCard elements not found. See screenshot.", "debug_screenshot.png")
         return []
 
     products = await page.query_selector_all('li[data-component="ProductCard"]')
+    if not products:
+        await page.screenshot(path="debug_screenshot.png", full_page=True)
+        await send_discord_message("[DEBUG] No ProductCard elements after wait. See screenshot.", "debug_screenshot.png")
+        return []
+
     deals = []
 
     for product in products:
@@ -55,15 +67,18 @@ async def scrape_currys(page):
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        page = await browser.new_page()
-        deals = await scrape_currys(page)
-        await browser.close()
+        context = await browser.new_context()
+        page = await context.new_page()
 
-        if not deals:
-            await send_discord_message("No qualifying deals found.")
-        else:
+        deals = await scrape_currys(page)
+
+        if deals:
             for deal in deals:
                 await send_discord_message(deal)
+        else:
+            await send_discord_message("No qualifying deals found.")
+
+        await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
