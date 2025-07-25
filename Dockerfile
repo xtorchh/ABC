@@ -1,5 +1,5 @@
-# Use official Playwright Python image with all dependencies pre-installed
-FROM mcr.microsoft.com/playwright/python:v1.35.1-focal
+# Use official Playwright Python image (latest stable)
+FROM mcr.microsoft.com/playwright/python:v1.34.0-focal
 
 # Set working directory inside container
 WORKDIR /app
