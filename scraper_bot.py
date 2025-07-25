@@ -14,60 +14,88 @@ async def send_to_discord(deal):
     async with aiohttp.ClientSession() as session:
         await session.post(DISCORD_WEBHOOK_URL, json={"content": content})
 
+async def send_debug_message(message):
+    async with aiohttp.ClientSession() as session:
+        await session.post(DISCORD_WEBHOOK_URL, json={"content": f"[DEBUG] {message}"})
+
 async def scrape_currys(page):
     deals = []
-    await page.goto("https://www.currys.co.uk/epic-deals")
-    await page.wait_for_selector('.product-listing-item')
+    await page.goto("https://www.currys.co.uk/epic-deals", wait_until="domcontentloaded")
 
-    products = await page.query_selector_all('.product-listing-item')
+    # Accept cookies
+    try:
+        await page.click("button#onetrust-accept-btn-handler", timeout=5000)
+    except:
+        pass
+
+    try:
+        await page.wait_for_selector('.ProductCard', timeout=60000)
+    except:
+        await send_debug_message("Timeout waiting for .ProductCard")
+        return []
+
+    products = await page.query_selector_all('.ProductCard')
     for product in products:
-        title_el = await product.query_selector('.product-title')
-        price_el = await product.query_selector('.price--actual')
-        original_price_el = await product.query_selector('.price--was')
-
-        if not title_el or not price_el:
-            continue
-
-        title = (await title_el.inner_text()).strip()
-        price_text = (await price_el.inner_text()).strip()
-        original_price_text = (await original_price_el.inner_text()).strip() if original_price_el else None
-
-        def parse_price(text):
-            return float(text.replace('£', '').replace(',', '').strip())
-
         try:
+            title_el = await product.query_selector('.ProductCard__Title')
+            price_el = await product.query_selector('.ProductCard__Price .visually-hidden:nth-child(1)')
+            original_price_el = await product.query_selector('.ProductCard__WasPrice')
+
+            if not title_el or not price_el:
+                continue
+
+            title = (await title_el.inner_text()).strip()
+            price_text = (await price_el.inner_text()).strip()
+            original_price_text = (await original_price_el.inner_text()).strip() if original_price_el else None
+
+            def parse_price(text):
+                return float(text.replace('£', '').replace(',', '').strip())
+
             price = parse_price(price_text)
             original_price = parse_price(original_price_text) if original_price_text else None
-        except Exception:
+
+            if original_price and original_price > 0:
+                discount_pct = round((original_price - price) / original_price * 100)
+            else:
+                discount_pct = 0
+
+            if discount_pct >= 70:
+                url = await product.query_selector_eval('a', 'a => a.href')
+                deals.append({
+                    'title': title,
+                    'price': price,
+                    'original_price': original_price,
+                    'discount_pct': discount_pct,
+                    'url': url
+                })
+
+        except Exception as e:
+            await send_debug_message(f"Error parsing product: {str(e)}")
             continue
 
-        if original_price and original_price > 0:
-            discount_pct = round((original_price - price) / original_price * 100)
-        else:
-            discount_pct = 0
-
-        if discount_pct >= 70:  # Only 70%+ deals
-            url = await product.query_selector_eval('a', 'a => a.href')
-            deals.append({
-                'title': title,
-                'price': price,
-                'original_price': original_price,
-                'discount_pct': discount_pct,
-                'url': url
-            })
     return deals
 
 async def main():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        page = await browser.new_page()
+    try:
+        async with async_playwright() as p:
+            await send_debug_message("Launching browser...")
+            browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+            page = await browser.new_page()
 
-        deals = await scrape_currys(page)
+            deals = await scrape_currys(page)
 
-        for deal in deals:
-            await send_to_discord(deal)
+            if not deals:
+                await send_debug_message("No 70%+ deals found.")
+            else:
+                await send_debug_message(f"Found {len(deals)} deals. Sending to Discord...")
+                for deal in deals:
+                    await send_to_discord(deal)
 
-        await browser.close()
+            await browser.close()
+            await send_debug_message("Browser closed. Done.")
+
+    except Exception as e:
+        await send_debug_message(f"Scraper failed: {str(e)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
