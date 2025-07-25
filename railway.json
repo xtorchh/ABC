@@ -4,10 +4,10 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "python scraper_bot.py"
+    "startCommand": "python install_playwright.py && python scraper_bot.py"
   },
   "cron": {
     "job": "*/10 * * * *",
-    "command": "python scraper_bot.py"
+    "command": "python install_playwright.py && python scraper_bot.py"
   }
 }

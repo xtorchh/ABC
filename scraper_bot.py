@@ -85,7 +85,7 @@ async def scrape_currys(page):
 
 async def main():
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
         page = await browser.new_page()
         await scrape_argos(page)
         await scrape_currys(page)

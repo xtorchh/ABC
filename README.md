@@ -1,16 +1,17 @@
-# Argos + Currys Scraper Bot
+# Argos + Currys Scraper Bot (Railway Compatible)
 
-Finds products with 80%+ discounts at Argos and Currys and sends them to Discord.
+Finds UK products with 80%+ discounts at Argos and Currys, then posts to a Discord webhook.
 
-## Runs Every 10 Minutes on Railway
-
-- Uses Playwright to scrape both sites
-- Posts results via Discord Webhook
+## Features
+- Scrapes Argos & Currys clearance sections
+- Uses Playwright with headless Chromium
+- Sends deals (80%+ off) to Discord via webhook
+- Runs automatically every 10 minutes on Railway
 
 ## Setup Locally
 
 ```bash
 pip install -r requirements.txt
-playwright install
+python install_playwright.py
 python scraper_bot.py
 ```
