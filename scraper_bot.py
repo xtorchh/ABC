@@ -15,7 +15,6 @@ async def send_discord_message(content, file_path=None):
         data = {"content": content}
         if file_path and os.path.exists(file_path):
             with open(file_path, 'rb') as f:
-                files = {'file': f}
                 webhook = aiohttp.FormData()
                 webhook.add_field('file', f, filename=os.path.basename(file_path), content_type='image/png')
                 webhook.add_field('payload_json', str(data))
@@ -88,6 +87,7 @@ async def main():
         if deals:
             for deal in deals:
                 await send_discord_message(deal)
+                await asyncio.sleep(1)  # 1 second delay to avoid rate limiting
         else:
             await send_discord_message("ℹ️ No qualifying deals found.")
 
