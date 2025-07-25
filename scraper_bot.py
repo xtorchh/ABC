@@ -7,7 +7,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 import aiohttp
 
 # ========== CONFIG ==========
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/your_webhook_here"
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ"
 CURRYS_URL = "https://www.currys.co.uk/epic-deals"
 DISCOUNT_THRESHOLD = 70  # %
 MAX_ATTEMPTS = 3
