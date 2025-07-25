@@ -1,42 +1,17 @@
-# Use official Python image
-FROM python:3.10-slim
-
-# Install dependencies for playwright browsers
-RUN apt-get update && apt-get install -y \
-    curl \
-    libnss3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libxfixes3 \
-    libxrender1 \
-    libxcb1 \
-    libdbus-1-3 \
-    libxkbcommon0 \
-    libglu1-mesa \
-    libpangocairo-1.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+# Use latest Playwright base image
+FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
 
 # Set working directory
 WORKDIR /app
 
-# Copy your scraper files
-COPY . /app
+# Copy files
+COPY . .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install playwright browsers
-RUN playwright install
+# Install Playwright browsers
+RUN playwright install --with-deps
 
-# Set environment variable to avoid sandbox issues in Railway
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-
-# Command to run your scraper
+# Run the scraper
 CMD ["python", "scraper_bot.py"]
