@@ -1,97 +1,95 @@
 import asyncio
 import logging
-from datetime import datetime
 from playwright.async_api import async_playwright
-import aiohttp
-import os
+import requests
 
-# Configure logging
+WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ"
+CURRYS_URL = "https://www.currys.co.uk/epic-deals"
+MIN_SAVE_POUNDS = 20
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(message)s")
 
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ"
-
-async def send_discord_message(content, file_path=None):
-    async with aiohttp.ClientSession() as session:
-        data = {"content": content}
-        if file_path and os.path.exists(file_path):
-            with open(file_path, 'rb') as f:
-                files = {'file': f}
-                webhook = aiohttp.FormData()
-                webhook.add_field('file', f, filename=os.path.basename(file_path), content_type='image/png')
-                webhook.add_field('payload_json', str(data))
-                async with session.post(DISCORD_WEBHOOK_URL, data=webhook) as resp:
-                    logging.info(f"Discord responded with {resp.status}")
-        else:
-            async with session.post(DISCORD_WEBHOOK_URL, json=data) as resp:
-                logging.info(f"Discord responded with {resp.status}")
 
 async def scrape_currys(page):
-    url = "https://www.currys.co.uk/epic-deals"
     logging.info("Navigating to Currys Epic Deals page...")
-    await page.goto(url, timeout=60000)
+    await page.goto(CURRYS_URL, timeout=60000)
 
+    logging.info("Waiting for .product-item-element selector")
     try:
-        logging.info("Waiting for .product-item-element selector")
-        await page.wait_for_selector(".product-item-element", timeout=7000, state="attached")
+        await page.wait_for_selector(".product-item-element", timeout=10000)
     except Exception as e:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        screenshot = f"screenshot_fail_{timestamp}.png"
-        try:
-            await page.screenshot(path=screenshot)
-            await send_discord_message("❌ Could not find product listings on Currys page.", file_path=screenshot)
-        except Exception as ss_err:
-            logging.error(f"Failed to send screenshot: {ss_err}")
-            await send_discord_message("❌ Could not find product listings on Currys page. (Screenshot failed)")
         logging.error(f"No '.product-item-element' found: {e}")
         return []
 
     products = await page.query_selector_all(".product-item-element")
     logging.info(f"Found {len(products)} products")
 
-    qualifying_deals = []
-
+    deals = []
     for product in products:
         try:
-            title_el = await product.query_selector(".list-product-tile-name")
-            price_el = await product.query_selector(".value")
-            save_el = await product.query_selector(".primary-save-price")
+            name = await product.query_selector_eval(".list-product-tile-name", "el => el.textContent.trim()")
+            price = await product.query_selector_eval(".value[content]", "el => el.getAttribute('content')")
+            saving_elem = await product.query_selector(".primary-save-price")
+            saving = 0
+            if saving_elem:
+                saving_text = await saving_elem.text_content()
+                saving = int(saving_text.strip().replace("£", "").replace(".00", ""))
 
-            title = await title_el.inner_text() if title_el else "Unknown Title"
-            price_raw = await price_el.get_attribute("content") if price_el else None
-            save_raw = await save_el.inner_text() if save_el else None
+            if saving >= MIN_SAVE_POUNDS:
+                # Get URL and image
+                url_elem = await product.query_selector("a")
+                url = "https://www.currys.co.uk" + await url_elem.get_attribute("href") if url_elem else ""
 
-            if not price_raw or not save_raw:
-                continue
+                image_elem = await product.query_selector("img")
+                image = await image_elem.get_attribute("src") if image_elem else ""
 
-            price = float(price_raw)
-            save_pounds = float(save_raw.replace("£", "").strip())
-
-            if save_pounds >= 20:
-                message = f"💥 **{title.strip()}**\n💷 Price: £{price:.2f}\n💸 Saving: £{save_pounds:.2f}"
-                qualifying_deals.append(message)
-
+                deals.append({
+                    "name": name,
+                    "price": price,
+                    "saving": saving,
+                    "url": url,
+                    "image": image
+                })
         except Exception as e:
-            logging.warning(f"Skipping a product due to error: {e}")
+            logging.warning(f"Error parsing product: {e}")
             continue
 
-    return qualifying_deals
+    return deals
+
+
+async def send_to_discord(deals):
+    for deal in deals:
+        message = {
+            "embeds": [{
+                "title": deal["name"],
+                "description": f"💷 Price: **£{deal['price']}**\n💸 You save: **£{deal['saving']}**",
+                "url": deal["url"],
+                "image": {"url": deal["image"]},
+                "color": 5814783
+            }]
+        }
+        try:
+            response = requests.post(WEBHOOK_URL, json=message)
+            if response.status_code == 204:
+                logging.info("✅ Deal sent to Discord")
+            else:
+                logging.warning(f"⚠️ Discord responded with {response.status_code}")
+        except Exception as e:
+            logging.error(f"Failed to send deal to Discord: {e}")
+
 
 async def main():
     logging.info("Starting Currys scraper...")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        )
         page = await context.new_page()
-
         deals = await scrape_currys(page)
-
-        if deals:
-            for deal in deals:
-                await send_discord_message(deal)
-        else:
-            await send_discord_message("ℹ️ No qualifying deals found.")
-
+        await send_to_discord(deals)
         await browser.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
