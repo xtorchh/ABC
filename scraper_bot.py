@@ -16,11 +16,13 @@ async def send_discord_message(message: str):
             print(f"Exception sending message: {e}")
 
 async def scrape_currys(page):
-    await page.goto("https://www.currys.co.uk/epic-deals", timeout=60000)
+    await page.goto("https://www.currys.co.uk/epic-deals", timeout=60000, wait_until="networkidle")
+    await page.wait_for_timeout(2000)  # Extra buffer to load content
+
     try:
-        await page.wait_for_selector('li[data-component="ProductCard"]', timeout=30000)
+        await page.wait_for_selector('li[data-component="ProductCard"]', timeout=10000)
     except Exception:
-        await send_discord_message("[DEBUG] Timeout: ProductCard elements not found.")
+        await send_discord_message("[DEBUG] Timeout: ProductCard elements still not found.")
         return []
 
     products = await page.query_selector_all('li[data-component="ProductCard"]')
@@ -36,7 +38,6 @@ async def scrape_currys(page):
             price_text = (await price_el.inner_text()).strip() if price_el else None
             save_text = (await save_el.inner_text()).strip() if save_el else None
 
-            # Extract % from "Save £100 (71%)"
             save_pct = 0
             if save_text:
                 match = re.search(r"\((\d+)%\)", save_text)
