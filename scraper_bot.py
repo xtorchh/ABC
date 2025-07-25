@@ -45,7 +45,7 @@ async def main():
         )
         page = await context.new_page()
         logging.info("Starting Currys scraper...")
-        await page.goto("https://www.currys.co.uk/gbuk/epic-deals-3147-theme.html")
+        await page.goto("https://www.currys.co.uk/epic-deals")
         await scrape_currys(page)
         await browser.close()
 
