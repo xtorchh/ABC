@@ -6,7 +6,7 @@ MIN_SAVE_POUNDS = 20
 WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ"
 
 async def scrape_currys(page):
-    await page.goto("https://www.currys.co.uk/epic-deals")
+    await page.goto("https://www.currys.co.uk/epic-deals", wait_until="networkidle")
     await page.wait_for_selector(".product-item-element")
 
     products = await page.query_selector_all(".product-item-element")
@@ -23,8 +23,6 @@ async def scrape_currys(page):
                 saving = float(saving_text.strip().replace("£", ""))
             
             url = await product.query_selector_eval("a.product-tile-link", "el => el.href")
-            image = await product.query_selector_eval("img.product-tile-image", "el => el.src")
-
             price = float(price_text.replace("£", "").replace(",", ""))
 
             if saving >= MIN_SAVE_POUNDS:
@@ -32,8 +30,7 @@ async def scrape_currys(page):
                     "name": name,
                     "price": price,
                     "saving": saving,
-                    "url": url,
-                    "image": image
+                    "url": url
                 })
         except Exception as e:
             logging.warning(f"Error parsing product: {e}")
@@ -42,15 +39,11 @@ async def scrape_currys(page):
 
 async def send_to_discord(deals):
     for deal in deals:
-        if not deal["name"] or not deal["url"]:
-            continue
-        
         embed = {
             "embeds": [{
                 "title": deal["name"],
                 "description": f"💷 Price: **£{deal['price']:.2f}**\n💸 You save: **£{deal['saving']:.2f}**",
                 "url": deal["url"],
-                "image": {"url": deal["image"]},
                 "color": 5814783
             }]
         }
@@ -60,7 +53,7 @@ async def send_to_discord(deals):
                 logging.info("✅ Deal sent to Discord")
             else:
                 logging.warning(f"⚠️ Discord responded with {r.status_code}: {r.text}")
-            await asyncio.sleep(1)  # Rate limiting delay
+            await asyncio.sleep(1)
         except Exception as e:
             logging.error(f"Failed to send to Discord: {e}")
 
@@ -81,7 +74,5 @@ async def main():
         await browser.close()
 
 if __name__ == "__main__":
-    import asyncio
-    import logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
     asyncio.run(main())
