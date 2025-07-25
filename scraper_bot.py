@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
 import aiohttp
 import datetime
 
@@ -36,15 +35,14 @@ async def send_to_discord(message, image_path=None):
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        )
         page = await context.new_page()
-
-        await stealth_async(page)
 
         logger.info("Navigating to Currys Epic Deals page...")
         await page.goto("https://www.currys.co.uk/epic-deals", timeout=60000)
 
-        # Wait and check for the main product container or "checking your connection" message
         attempts = 3
         selector = ".product-item-element"
         for attempt in range(1, attempts + 1):
@@ -57,7 +55,8 @@ async def main():
                 logger.warning(f"[DEBUG] Timeout on attempt {attempt}: {selector} not found")
 
                 # Screenshot on last attempt or if suspicious page is detected
-                if attempt == attempts or "just checking your connection" in (await page.content()).lower():
+                content_lower = (await page.content()).lower()
+                if attempt == attempts or "just checking your connection" in content_lower:
                     screenshot_path = f"screenshot_fail_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
                     await page.screenshot(path=screenshot_path)
                     logger.error(f"No {selector} elements found after {attempts} attempts. Screenshot saved to {screenshot_path}")
@@ -65,7 +64,6 @@ async def main():
                     await browser.close()
                     return
 
-        # Example extraction logic here
         deals = []
         products = await page.query_selector_all(selector)
         for product in products:
@@ -77,7 +75,6 @@ async def main():
             price = await price_el.inner_text() if price_el else "No price"
             save = await save_el.inner_text() if save_el else "No save info"
 
-            # Filter deals with >= 70% off (example, you can customize)
             if save != "No save info" and "%" in save:
                 try:
                     discount = int(save.strip().replace("Save ", "").replace("%", ""))
