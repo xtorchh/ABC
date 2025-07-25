@@ -7,7 +7,8 @@ WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7
 
 async def scrape_currys(page):
     await page.goto("https://www.currys.co.uk/epic-deals", wait_until="networkidle")
-    await page.wait_for_selector(".product-item-element")
+    await asyncio.sleep(5)  # Extra delay for dynamic content
+    await page.wait_for_selector(".product-item-element", timeout=60000)
 
     products = await page.query_selector_all(".product-item-element")
     deals = []
@@ -22,13 +23,16 @@ async def scrape_currys(page):
                 saving_text = await saving_el.text_content()
                 saving = float(saving_text.strip().replace("£", ""))
             
+            url = await product.query_selector_eval("a.product-tile-link", "el => el.href")
+
             price = float(price_text.replace("£", "").replace(",", ""))
 
             if saving >= MIN_SAVE_POUNDS:
                 deals.append({
                     "name": name,
                     "price": price,
-                    "saving": saving
+                    "saving": saving,
+                    "url": url
                 })
         except Exception as e:
             logging.warning(f"Error parsing product: {e}")
@@ -37,10 +41,14 @@ async def scrape_currys(page):
 
 async def send_to_discord(deals):
     for deal in deals:
+        if not deal["name"] or not deal["url"]:
+            continue
+        
         embed = {
             "embeds": [{
                 "title": deal["name"],
                 "description": f"💷 Price: **£{deal['price']:.2f}**\n💸 You save: **£{deal['saving']:.2f}**",
+                "url": deal["url"],
                 "color": 5814783
             }]
         }
@@ -50,7 +58,7 @@ async def send_to_discord(deals):
                 logging.info("✅ Deal sent to Discord")
             else:
                 logging.warning(f"⚠️ Discord responded with {r.status_code}: {r.text}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(1)  # Rate limiting delay
         except Exception as e:
             logging.error(f"Failed to send to Discord: {e}")
 
