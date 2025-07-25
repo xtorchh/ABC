@@ -6,7 +6,7 @@ import aiohttp
 import base64
 from io import BytesIO
 
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+DISCORD_WEBHOOK_URL = os.getenv("https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ")
 
 if not DISCORD_WEBHOOK_URL:
     print("Error: DISCORD_WEBHOOK_URL environment variable not set.")
