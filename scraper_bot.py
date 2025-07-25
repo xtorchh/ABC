@@ -1,93 +1,120 @@
 import asyncio
 import logging
-from datetime import datetime
 from playwright.async_api import async_playwright
 import aiohttp
+import datetime
 
 WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def send_to_discord(message: str, screenshot_path: str = None):
+async def send_to_discord(message, screenshot_path=None):
     async with aiohttp.ClientSession() as session:
-        data = {"content": message}
-        files = {}
-        if screenshot_path:
-            with open(screenshot_path, "rb") as f:
-                file_bytes = f.read()
-            files = {"file": file_bytes}
-            # Note: discord.py or aiohttp webhook file upload requires multipart/form-data
-            # Here, simpler approach: upload via multipart
-            # We'll use aiohttp's FormData
-
-            form = aiohttp.FormData()
-            form.add_field("payload_json", '{"content": "%s"}' % message)
-            form.add_field("file", file_bytes, filename="screenshot.png", content_type="image/png")
-            try:
-                async with session.post(WEBHOOK_URL, data=form) as resp:
-                    if resp.status != 204:
-                        logger.error(f"Discord webhook failed with status {resp.status}")
-            except Exception as e:
-                logger.error(f"Failed to send to Discord: {e}")
-            return
-
         try:
-            async with session.post(WEBHOOK_URL, json=data) as resp:
-                if resp.status != 204:
-                    logger.error(f"Discord webhook failed with status {resp.status}")
+            if screenshot_path:
+                with open(screenshot_path, "rb") as f:
+                    files = {"file": f}
+                    data = {"content": message}
+                    # Discord webhook file upload with aiohttp
+                    # Discord expects multipart/form-data with file key "file"
+                    # aiohttp requires using 'data' for form data and 'files' param isn't accepted.
+                    # So we use MultipartWriter instead:
+                    from aiohttp import FormData
+                    form = FormData()
+                    form.add_field("content", message)
+                    form.add_field("file", f, filename=screenshot_path)
+                    async with session.post(WEBHOOK_URL, data=form) as resp:
+                        if resp.status != 204 and resp.status != 200:
+                            text = await resp.text()
+                            logger.error(f"Discord webhook failed: {resp.status} {text}")
+                        else:
+                            logger.info("Sent message and screenshot to Discord")
+            else:
+                async with session.post(WEBHOOK_URL, json={"content": message}) as resp:
+                    if resp.status != 204 and resp.status != 200:
+                        text = await resp.text()
+                        logger.error(f"Discord webhook failed: {resp.status} {text}")
+                    else:
+                        logger.info("Sent message to Discord")
         except Exception as e:
-            logger.error(f"Failed to send to Discord: {e}")
+            logger.error(f"[ERROR] Failed to send to Discord: {e}")
 
 async def scrape_currys(page):
-    url = "https://www.currys.co.uk/epic-deals"
-    await page.goto(url)
-
-    # Wait for deals container; adjust selector if needed
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        try:
-            logger.info(f"Waiting for .product-item-element, attempt {attempt}")
-            await page.wait_for_selector(".product-item-element", timeout=15000)
-            break
-        except Exception:
-            logger.warning(f"[DEBUG] Timeout on attempt {attempt}: .product-item-element not found")
-            if attempt == max_attempts:
-                screenshot_name = f"screenshot_fail_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                await page.screenshot(path=screenshot_name)
-                await send_to_discord(f"[ERROR] No product-item-element found after {max_attempts} attempts. See screenshot.", screenshot_name)
-                return []
-
-    products = await page.query_selector_all(".product-item-element")
-    deals = []
-    for product in products:
-        try:
-            title = await product.query_selector_eval(".product-title", "el => el.textContent.trim()")
-            price_text = await product.query_selector_eval(".price", "el => el.textContent.trim()")
-            save_text = await product.query_selector_eval(".save", "el => el.textContent.trim()", strict=False)  # might be missing
-            # Example: Check if save_text has 70% or more
-            if save_text and "70%" in save_text:
-                deals.append(f"{title} - {price_text} - {save_text}")
-        except Exception:
-            continue
-    return deals
+    attempts = 3
+    selectors = [".product-item-element", ".plp-productitem-id", ".mobile-item-element"]
+    for attempt in range(1, attempts + 1):
+        for selector in selectors:
+            logger.info(f"[DEBUG] Waiting for {selector}, attempt {attempt}")
+            try:
+                await page.wait_for_selector(selector, timeout=15000)
+                logger.info(f"Found elements with selector: {selector}")
+                return selector
+            except Exception as e:
+                logger.warning(f"[DEBUG] Timeout on attempt {attempt} for selector {selector}: {e}")
+        if attempt < attempts:
+            await asyncio.sleep(2)
+    return None
 
 async def main():
     logger.info("Starting scraper...")
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
 
-        deals = await scrape_currys(page)
-        if deals:
-            message = "**Currys 70%+ Deals Found:**\n" + "\n".join(deals)
-        else:
-            message = "No qualifying deals found."
+        url = "https://www.currys.co.uk/epic-deals"
+        logger.info(f"Navigating to Currys Epic Deals page: {url}")
+        await page.goto(url)
 
-        await send_to_discord(message)
+        # Take screenshot immediately after page load for debug
+        debug_screenshot = f"page_after_load_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        await page.screenshot(path=debug_screenshot)
+        logger.info(f"Saved initial page screenshot to {debug_screenshot}")
+        await send_to_discord(f"Loaded Currys deals page - screenshot attached.", debug_screenshot)
+
+        # Scroll down to trigger lazy loading
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await asyncio.sleep(3)
+
+        selector = await scrape_currys(page)
+        if not selector:
+            error_screenshot = f"screenshot_fail_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            await page.screenshot(path=error_screenshot)
+            logger.error(f"No product elements found after 3 attempts. Screenshot saved to {error_screenshot}")
+            await send_to_discord(f"[ERROR] No product elements found after 3 attempts. See screenshot.", error_screenshot)
+            await browser.close()
+            return
+
+        # Extract deals info
+        deals = await page.eval_on_selector_all(
+            selector,
+            """(elements) => elements.map(el => {
+                const titleEl = el.querySelector('.product-title, .plp-product-title, h3');
+                const priceEl = el.querySelector('.product-price, .plp-product-price, .price');
+                const saveEl = el.querySelector('.product-save, .plp-product-save, .save');
+                return {
+                    title: titleEl ? titleEl.innerText.trim() : null,
+                    price: priceEl ? priceEl.innerText.trim() : null,
+                    save: saveEl ? saveEl.innerText.trim() : null
+                };
+            })"""
+        )
+
+        qualifying_deals = [d for d in deals if d["save"] and "70%" in d["save"]]
+
+        if not qualifying_deals:
+            logger.info("No qualifying deals found.")
+            await send_to_discord("No qualifying deals with 70%+ discount found on Currys.")
+        else:
+            for deal in qualifying_deals:
+                msg = f"Deal Found:\n{deal['title']}\nPrice: {deal['price']}\nSave: {deal['save']}"
+                await send_to_discord(msg)
+
         await browser.close()
 
 if __name__ == "__main__":
