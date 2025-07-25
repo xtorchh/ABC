@@ -1,5 +1,5 @@
 # Use official Playwright Python image (latest stable)
-FROM mcr.microsoft.com/playwright/python:v1.34.0-focal
+FROM mcr.microsoft.com/playwright/python:v1.48.0-focal
 
 # Set working directory inside container
 WORKDIR /app
