@@ -22,19 +22,39 @@ async def scrape_currys(page):
     deals = []
     await page.goto("https://www.currys.co.uk/epic-deals", wait_until="domcontentloaded")
 
-    # Accept cookies
     try:
         await page.click("button#onetrust-accept-btn-handler", timeout=5000)
     except:
-        pass
+        pass  # no cookie popup
+
+    # Scroll to bottom to load all products
+    await page.evaluate("""
+        async () => {
+            await new Promise(resolve => {
+                let totalHeight = 0;
+                const distance = 100;
+                const timer = setInterval(() => {
+                    window.scrollBy(0, distance);
+                    totalHeight += distance;
+                    if (totalHeight >= document.body.scrollHeight) {
+                        clearInterval(timer);
+                        resolve();
+                    }
+                }, 200);
+            });
+        }
+    """)
+    await page.wait_for_timeout(3000)
 
     try:
         await page.wait_for_selector('.ProductCard', timeout=60000)
     except:
-        await send_debug_message("Timeout waiting for .ProductCard")
+        await send_debug_message("Timeout: .ProductCard not found.")
         return []
 
     products = await page.query_selector_all('.ProductCard')
+    await send_debug_message(f"Found {len(products)} product cards on page.")
+
     for product in products:
         try:
             title_el = await product.query_selector('.ProductCard__Title')
@@ -59,7 +79,13 @@ async def scrape_currys(page):
             else:
                 discount_pct = 0
 
-            if discount_pct >= 70:
+            # 🔧 TEMP lower threshold to 20% for testing
+            print(f"\nTITLE: {title}")
+            print(f"PRICE: £{price:.2f}")
+            print(f"ORIGINAL: £{original_price:.2f}" if original_price else "ORIGINAL: Unknown")
+            print(f"DISCOUNT: {discount_pct}%")
+
+            if discount_pct >= 20:
                 url = await product.query_selector_eval('a', 'a => a.href')
                 deals.append({
                     'title': title,
@@ -85,17 +111,17 @@ async def main():
             deals = await scrape_currys(page)
 
             if not deals:
-                await send_debug_message("No 70%+ deals found.")
+                await send_debug_message("No qualifying deals found.")
             else:
-                await send_debug_message(f"Found {len(deals)} deals. Sending to Discord...")
+                await send_debug_message(f"Sending {len(deals)} deals to Discord...")
                 for deal in deals:
                     await send_to_discord(deal)
 
             await browser.close()
-            await send_debug_message("Browser closed. Done.")
+            await send_debug_message("Finished run.")
 
     except Exception as e:
-        await send_debug_message(f"Scraper failed: {str(e)}")
+        await send_debug_message(f"Script crashed: {str(e)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
