@@ -9,7 +9,6 @@ MIN_SAVE_POUNDS = 20
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(message)s")
 
-
 async def scrape_currys(page):
     logging.info("Navigating to Currys Epic Deals page...")
     await page.goto(CURRYS_URL, timeout=60000)
@@ -27,39 +26,42 @@ async def scrape_currys(page):
     deals = []
     for product in products:
         try:
-            name = await product.query_selector_eval(".list-product-tile-name", "el => el.textContent.trim()")
-            price = await product.query_selector_eval(".value[content]", "el => el.getAttribute('content')")
-            saving_elem = await product.query_selector(".primary-save-price")
+            name_el = await product.query_selector(".list-product-tile-name")
+            name = await name_el.text_content() if name_el else "No name"
+
+            price_el = await product.query_selector(".value[content]")
+            price = await price_el.get_attribute("content") if price_el else "0"
+
+            saving_el = await product.query_selector(".primary-save-price")
             saving = 0
-            if saving_elem:
-                saving_text = await saving_elem.text_content()
+            if saving_el:
+                saving_text = await saving_el.text_content()
                 saving = int(saving_text.strip().replace("£", "").replace(".00", ""))
 
             if saving >= MIN_SAVE_POUNDS:
-                # Get URL and image
-                url_elem = await product.query_selector("a")
-                url = "https://www.currys.co.uk" + await url_elem.get_attribute("href") if url_elem else ""
+                url_el = await product.query_selector("a")
+                url = "https://www.currys.co.uk" + await url_el.get_attribute("href") if url_el else ""
 
-                image_elem = await product.query_selector("img")
-                image = await image_elem.get_attribute("src") if image_elem else ""
+                image_el = await product.query_selector("img")
+                image = await image_el.get_attribute("src") if image_el else ""
 
                 deals.append({
-                    "name": name,
+                    "name": name.strip(),
                     "price": price,
                     "saving": saving,
                     "url": url,
                     "image": image
                 })
+
         except Exception as e:
             logging.warning(f"Error parsing product: {e}")
             continue
 
     return deals
 
-
 async def send_to_discord(deals):
     for deal in deals:
-        message = {
+        embed = {
             "embeds": [{
                 "title": deal["name"],
                 "description": f"💷 Price: **£{deal['price']}**\n💸 You save: **£{deal['saving']}**",
@@ -69,14 +71,13 @@ async def send_to_discord(deals):
             }]
         }
         try:
-            response = requests.post(WEBHOOK_URL, json=message)
-            if response.status_code == 204:
+            r = requests.post(WEBHOOK_URL, json=embed)
+            if r.status_code == 204:
                 logging.info("✅ Deal sent to Discord")
             else:
-                logging.warning(f"⚠️ Discord responded with {response.status_code}")
+                logging.warning(f"⚠️ Discord responded with {r.status_code}")
         except Exception as e:
-            logging.error(f"Failed to send deal to Discord: {e}")
-
+            logging.error(f"Failed to send to Discord: {e}")
 
 async def main():
     logging.info("Starting Currys scraper...")
@@ -89,7 +90,6 @@ async def main():
         deals = await scrape_currys(page)
         await send_to_discord(deals)
         await browser.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
