@@ -1,32 +1,31 @@
 import asyncio
-import aiohttp
 from playwright.async_api import async_playwright
+import aiohttp
+import os
 
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1398087107469250591/zZ7WPGGj-cQ7l5H8VRV48na0PqgOAKqE1exEIm3vBRVnuCk7BcuP21UIu-vEM8KRfLVQ"
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL") or "YOUR_DISCORD_WEBHOOK_URL_HERE"
 
-async def send_to_discord(deal):
-    content = (
-        f"**{deal['title']}**\n"
-        f"Price: £{deal['price']:.2f} (was £{deal['original_price']:.2f})\n"
-        f"Discount: {deal['discount_pct']}%\n"
-        f"{deal['url']}"
-    )
+async def send_debug(message: str):
     async with aiohttp.ClientSession() as session:
-        await session.post(DISCORD_WEBHOOK_URL, json={"content": content})
-
-async def send_debug(message):
-    async with aiohttp.ClientSession() as session:
-        await session.post(DISCORD_WEBHOOK_URL, json={"content": f"[DEBUG] {message}"})
+        payload = {"content": f"[DEBUG] {message}"}
+        try:
+            async with session.post(DISCORD_WEBHOOK_URL, json=payload) as resp:
+                if resp.status != 204 and resp.status != 200:
+                    print(f"Failed to send debug message: {resp.status}")
+        except Exception as e:
+            print(f"Exception sending debug: {e}")
 
 async def scrape_currys(page):
     deals = []
-    await page.goto("https://www.currys.co.uk/epic-deals", wait_until="domcontentloaded")
+    await page.goto("https://www.currys.co.uk/epic-deals", wait_until="networkidle")
 
+    # Accept cookies if shown
     try:
         await page.click("button#onetrust-accept-btn-handler", timeout=5000)
     except:
-        pass  # cookie popup may not appear
+        pass
 
+    # Scroll slowly to load lazy content
     await page.evaluate("""
         async () => {
             await new Promise(resolve => {
@@ -45,20 +44,28 @@ async def scrape_currys(page):
     """)
     await page.wait_for_timeout(3000)
 
-    try:
-        await page.wait_for_selector('.ProductCard', timeout=60000)
-    except:
-        await send_debug("Timeout: .ProductCard not found.")
-        return []
+    selectors = ['.ProductCard', '.product-listing-item', '.product-tile']
+    products = []
 
-    products = await page.query_selector_all('.ProductCard')
-    await send_debug(f"Found {len(products)} products.")
+    for sel in selectors:
+        try:
+            await page.wait_for_selector(sel, timeout=10000)
+            products = await page.query_selector_all(sel)
+            if products:
+                await send_debug(f"Using selector '{sel}', found {len(products)} products.")
+                break
+        except Exception:
+            continue
+
+    if not products:
+        await send_debug("No product elements found with known selectors.")
+        return []
 
     for product in products:
         try:
-            title_el = await product.query_selector('.ProductCard__Title')
-            price_el = await product.query_selector('.ProductCard__Price .visually-hidden:nth-child(1)')
-            save_el = await product.query_selector('.ProductCard__Savings')
+            title_el = await product.query_selector('.ProductCard__Title, .product-tile__title')
+            price_el = await product.query_selector('.ProductCard__Price .visually-hidden:nth-child(1), .product-tile__price')
+            save_el = await product.query_selector('.ProductCard__Savings, .product-tile__saving')
 
             if not title_el or not price_el or not save_el:
                 continue
@@ -68,6 +75,7 @@ async def scrape_currys(page):
             save_text = (await save_el.inner_text()).strip()
 
             def parse_price(text):
+                # e.g. "£299.99"
                 return float(text.replace('£', '').replace(',', '').strip())
 
             price = parse_price(price_text)
@@ -87,30 +95,39 @@ async def scrape_currys(page):
                 })
 
         except Exception as e:
-            await send_debug(f"Product error: {e}")
+            await send_debug(f"Product parsing error: {e}")
             continue
 
     return deals
 
+async def notify_deals(deals):
+    if not deals:
+        await send_debug("No qualifying deals found.")
+        return
+
+    async with aiohttp.ClientSession() as session:
+        for deal in deals:
+            content = (f"**{deal['title']}**\n"
+                       f"Price: £{deal['price']:.2f} (Original: £{deal['original_price']:.2f})\n"
+                       f"Discount: {deal['discount_pct']}%\n"
+                       f"{deal['url']}")
+            payload = {"content": content}
+            try:
+                async with session.post(DISCORD_WEBHOOK_URL, json=payload) as resp:
+                    if resp.status != 204 and resp.status != 200:
+                        print(f"Failed to send deal message: {resp.status}")
+            except Exception as e:
+                print(f"Exception sending deal: {e}")
+
 async def main():
-    try:
-        async with async_playwright() as p:
-            await send_debug("Launching browser...")
-            browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-            page = await browser.new_page()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+        page = await browser.new_page()
 
-            deals = await scrape_currys(page)
+        deals = await scrape_currys(page)
+        await notify_deals(deals)
 
-            if not deals:
-                await send_debug("No qualifying deals found.")
-            else:
-                await send_debug(f"Found {len(deals)} deals with ≥70% discount.")
-                for deal in deals:
-                    await send_to_discord(deal)
-
-            await browser.close()
-    except Exception as e:
-        await send_debug(f"Script crashed: {e}")
+        await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
